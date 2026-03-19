@@ -16,7 +16,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.4.0")
+app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,7 +102,7 @@ async def send_webhook(webhook_url: str, payload: dict):
 
 @app.get("/")
 def root():
-    return {"name": "TestThread", "version": "0.4.0", "status": "running"}
+    return {"name": "TestThread", "version": "0.5.0", "status": "running"}
 
 @app.post("/suites")
 def create_suite(suite: SuiteCreate):
@@ -237,33 +237,66 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
     latencies = [r["latency_ms"] for r in results if r.get("latency_ms") is not None]
     avg_latency = int(sum(latencies) / len(latencies)) if latencies else None
 
+    total = len(cases)
+    curr_pass_rate = round((passed / total) * 100, 1) if total > 0 else 0
+
+    prev_runs = supabase.table("test_runs")\
+        .select("*")\
+        .eq("suite_id", suite_id)\
+        .eq("status", "completed")\
+        .neq("id", run_id)\
+        .order("created_at", desc=True)\
+        .limit(1)\
+        .execute()
+
+    regression = False
+    prev_pass_rate = None
+
+    if prev_runs.data:
+        prev_run = prev_runs.data[0]
+        prev_total = prev_run.get("total", 0)
+        prev_passed = prev_run.get("passed", 0)
+        prev_pass_rate = round((prev_passed / prev_total) * 100, 1) if prev_total > 0 else 0
+        if curr_pass_rate < prev_pass_rate:
+            regression = True
+
     supabase.table("test_runs").update({
         "status": "completed",
         "passed": passed,
         "failed": failed,
         "completed_at": datetime.utcnow().isoformat(),
         "avg_latency_ms": avg_latency,
+        "regression": regression,
+        "prev_pass_rate": prev_pass_rate,
+        "curr_pass_rate": curr_pass_rate,
     }).eq("id", run_id).execute()
 
     final = {
         "run_id": run_id,
-        "total": len(cases),
+        "total": total,
         "passed": passed,
         "failed": failed,
         "status": "completed",
         "avg_latency_ms": avg_latency,
+        "curr_pass_rate": curr_pass_rate,
+        "prev_pass_rate": prev_pass_rate,
+        "regression": regression,
+        "regression_message": f"⚠️ Regression detected. Pass rate dropped from {prev_pass_rate}% to {curr_pass_rate}%" if regression else None,
         "results": results
     }
 
     webhook_url = suite.get("webhook_url")
-    if webhook_url and failed > 0:
+    if webhook_url and (failed > 0 or regression):
         await send_webhook(webhook_url, {
             "event": "test_run_completed",
             "suite": suite["name"],
             "run_id": run_id,
             "passed": passed,
             "failed": failed,
-            "total": len(cases),
+            "total": total,
+            "regression": regression,
+            "curr_pass_rate": curr_pass_rate,
+            "prev_pass_rate": prev_pass_rate,
         })
 
     return final

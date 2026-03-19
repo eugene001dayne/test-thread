@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: testthread
-Version: 0.1.0
+Version: 0.2.0
 Summary: pytest for AI agents
 Home-page: https://github.com/eugene001dayne/test-thread
 Author: Eugene Dayne Mawuli
@@ -10,6 +10,7 @@ Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: Apache Software License
 Requires-Python: >=3.7
 Description-Content-Type: text/markdown
+License-File: LICENSE
 Requires-Dist: requests
 Dynamic: author
 Dynamic: classifier
@@ -17,6 +18,7 @@ Dynamic: description
 Dynamic: description-content-type
 Dynamic: home-page
 Dynamic: license
+Dynamic: license-file
 Dynamic: requires-dist
 Dynamic: requires-python
 Dynamic: summary

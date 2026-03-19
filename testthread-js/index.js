@@ -2,8 +2,9 @@ const https = require("https");
 const http = require("http");
 
 class TestThread {
-  constructor(baseUrl = "https://test-thread-production.up.railway.app") {
+  constructor(baseUrl = "https://test-thread-production.up.railway.app", geminiKey = null) {
     this.base = baseUrl.replace(/\/$/, "");
+    this.geminiKey = geminiKey;
   }
 
   _request(method, path, body = null) {
@@ -12,7 +13,7 @@ class TestThread {
       const lib = url.protocol === "https:" ? https : http;
       const options = {
         hostname: url.hostname,
-        path: url.pathname,
+        path: url.pathname + url.search,
         method,
         headers: { "Content-Type": "application/json" },
       };
@@ -27,11 +28,12 @@ class TestThread {
     });
   }
 
-  createSuite(name, agentEndpoint, description = null) {
+  createSuite(name, agentEndpoint, description = null, webhookUrl = null) {
     return this._request("POST", "/suites", {
       name,
       description,
       agent_endpoint: agentEndpoint,
+      webhook_url: webhookUrl,
     });
   }
 
@@ -46,7 +48,17 @@ class TestThread {
   }
 
   runSuite(suiteId) {
-    return this._request("POST", `/suites/${suiteId}/run`);
+    const query = this.geminiKey ? `?gemini_key=${this.geminiKey}` : "";
+    return this._request("POST", `/suites/${suiteId}/run${query}`);
+  }
+
+  diagnose(input, expectedOutput, actualOutput) {
+    return this._request("POST", "/diagnose", {
+      input,
+      expected_output: expectedOutput,
+      actual_output: actualOutput,
+      api_key: this.geminiKey,
+    });
   }
 
   getRun(runId) {

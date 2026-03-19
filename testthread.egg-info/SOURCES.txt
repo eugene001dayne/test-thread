@@ -1,3 +1,4 @@
+LICENSE
 README.md
 setup.py
 testthread/__init__.py

@@ -3,7 +3,7 @@ import httpx
 import re
 import json
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -33,7 +33,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.6.0")
+app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.7.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,6 +61,27 @@ class DiagnoseRequest(BaseModel):
     actual_output: str
     api_key: Optional[str] = None
     provider: Optional[str] = "gemini"
+
+def estimate_cost(input_text: str, output_text: str, model: str = "gemini") -> dict:
+    input_tokens = len(input_text.split()) * 1.3
+    output_tokens = len(output_text.split()) * 1.3 if output_text else 0
+
+    cost_per_1k = {
+        "gemini": 0.00015,
+        "gpt-4": 0.03,
+        "gpt-3.5": 0.002,
+        "claude": 0.008,
+    }
+
+    rate = cost_per_1k.get(model, 0.00015)
+    total_tokens = input_tokens + output_tokens
+    cost = (total_tokens / 1000) * rate
+
+    return {
+        "input_tokens": int(input_tokens),
+        "output_tokens": int(output_tokens),
+        "estimated_cost_usd": round(cost, 6),
+    }
 
 async def call_gemini(prompt: str, api_key: str) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
@@ -119,7 +140,7 @@ async def send_webhook(webhook_url: str, payload: dict):
 
 @app.get("/")
 def root():
-    return {"name": "TestThread", "version": "0.6.0", "status": "running"}
+    return {"name": "TestThread", "version": "0.7.0", "status": "running"}
 
 @app.post("/suites")
 def create_suite(suite: SuiteCreate):
@@ -243,6 +264,8 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
             else:
                 failed += 1
 
+            cost_data = estimate_cost(case["input"], actual or "")
+
             result_data = {
                 "id": str(uuid.uuid4()),
                 "run_id": run_id,
@@ -255,12 +278,17 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
                 "latency_ms": latency_ms if "latency_ms" in dir() else None,
                 "pii_detected": pii_result["detected"] if "pii_result" in dir() else False,
                 "pii_types": ", ".join(pii_result["types"]) if "pii_result" in dir() and pii_result["types"] else None,
+                "input_tokens": cost_data["input_tokens"],
+                "output_tokens": cost_data["output_tokens"],
+                "estimated_cost_usd": cost_data["estimated_cost_usd"],
             }
             supabase.table("test_results").insert(result_data).execute()
             results.append(result_data)
 
     latencies = [r["latency_ms"] for r in results if r.get("latency_ms") is not None]
     avg_latency = int(sum(latencies) / len(latencies)) if latencies else None
+
+    total_cost = round(sum(r.get("estimated_cost_usd", 0) for r in results), 6)
 
     total = len(cases)
     curr_pass_rate = round((passed / total) * 100, 1) if total > 0 else 0
@@ -294,6 +322,7 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
         "regression": regression,
         "prev_pass_rate": prev_pass_rate,
         "curr_pass_rate": curr_pass_rate,
+        "estimated_cost_usd": total_cost,
     }).eq("id", run_id).execute()
 
     final = {
@@ -307,6 +336,7 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
         "prev_pass_rate": prev_pass_rate,
         "regression": regression,
         "regression_message": f"⚠️ Regression detected. Pass rate dropped from {prev_pass_rate}% to {curr_pass_rate}%" if regression else None,
+        "estimated_cost_usd": total_cost,
         "results": results
     }
 
@@ -329,6 +359,42 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
 @app.post("/trigger")
 async def trigger_run(suite_id: str, gemini_key: Optional[str] = None):
     return await run_suite(suite_id, gemini_key)
+
+@app.post("/suites/{suite_id}/import-csv")
+async def import_csv(suite_id: str, request: Request):
+    from fastapi import Request
+    body = await request.body()
+    text = body.decode("utf-8")
+    lines = text.strip().split("\n")
+
+    if len(lines) < 2:
+        raise HTTPException(status_code=400, detail="CSV must have a header and at least one row")
+
+    headers = [h.strip().lower() for h in lines[0].split(",")]
+    required = {"name", "input", "expected_output"}
+    if not required.issubset(set(headers)):
+        raise HTTPException(status_code=400, detail=f"CSV must have columns: name, input, expected_output. Optional: match_type, description")
+
+    imported = []
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        values = line.split(",")
+        row = dict(zip(headers, [v.strip() for v in values]))
+        case_id = str(uuid.uuid4())
+        data = {
+            "id": case_id,
+            "suite_id": suite_id,
+            "name": row.get("name", "Imported case"),
+            "description": row.get("description", None),
+            "input": row.get("input", ""),
+            "expected_output": row.get("expected_output", ""),
+            "match_type": row.get("match_type", "contains"),
+        }
+        supabase.table("test_cases").insert(data).execute()
+        imported.append(data)
+
+    return {"imported": len(imported), "cases": imported}
 
 @app.post("/diagnose")
 async def diagnose(req: DiagnoseRequest):

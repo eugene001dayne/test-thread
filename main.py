@@ -1,6 +1,7 @@
 import uuid
 import httpx
 import re
+import json
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,10 +12,11 @@ import os
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://oigfsomrrmoditnrjgdm.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZ2Zzb21ycm1vZGl0bnJqZ2RtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4NzY3NTYsImV4cCI6MjA4OTQ1Mjc1Nn0.TPLvSzRxUMKYB-vhJa204UOv6nCI8CBx9mAmqNP7BAU")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.1.0")
+app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,6 +29,7 @@ class SuiteCreate(BaseModel):
     name: str
     description: Optional[str] = None
     agent_endpoint: str
+    webhook_url: Optional[str] = None
 
 class CaseCreate(BaseModel):
     name: str
@@ -35,9 +38,71 @@ class CaseCreate(BaseModel):
     expected_output: str
     match_type: str = "contains"
 
+class DiagnoseRequest(BaseModel):
+    input: str
+    expected_output: str
+    actual_output: str
+    api_key: Optional[str] = None
+    provider: Optional[str] = "gemini"
+
+async def call_gemini(prompt: str, api_key: str) -> str:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(url, json=payload)
+        data = response.json()
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+
+async def semantic_match(expected: str, actual: str, api_key: str) -> dict:
+    prompt = f"""You are evaluating an AI agent output.
+
+Expected meaning: {expected}
+Actual output: {actual}
+
+Does the actual output convey the same meaning as expected, even if worded differently?
+Reply in this exact JSON format with no extra text:
+{{"match": true or false, "reason": "one sentence explanation"}}"""
+
+    try:
+        result = await call_gemini(prompt, api_key)
+        cleaned = result.strip().replace("```json", "").replace("```", "").strip()
+        return json.loads(cleaned)
+    except Exception as e:
+        return {"match": False, "reason": str(e)}
+
+async def diagnose_failure(input: str, expected: str, actual: str, api_key: str) -> str:
+    prompt = f"""You are an expert AI agent debugger.
+
+A test case failed. Analyze why and suggest a fix.
+
+Input given to agent: {input}
+Expected output: {expected}
+Actual output: {actual}
+
+Provide:
+1. Why the agent likely failed
+2. What the agent did wrong
+3. A specific suggestion to fix it
+
+Be concise and practical. Max 150 words."""
+
+    try:
+        return await call_gemini(prompt, api_key)
+    except Exception as e:
+        return f"Diagnosis unavailable: {str(e)}"
+
+async def send_webhook(webhook_url: str, payload: dict):
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(webhook_url, json=payload)
+    except Exception:
+        pass
+
 @app.get("/")
 def root():
-    return {"name": "TestThread", "version": "0.1.0", "status": "running"}
+    return {"name": "TestThread", "version": "0.2.0", "status": "running"}
 
 @app.post("/suites")
 def create_suite(suite: SuiteCreate):
@@ -47,6 +112,7 @@ def create_suite(suite: SuiteCreate):
         "name": suite.name,
         "description": suite.description,
         "agent_endpoint": suite.agent_endpoint,
+        "webhook_url": suite.webhook_url,
     }
     result = supabase.table("test_suites").insert(data).execute()
     return result.data[0]
@@ -77,7 +143,7 @@ def list_cases(suite_id: str):
     return result.data
 
 @app.post("/suites/{suite_id}/run")
-async def run_suite(suite_id: str):
+async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
     suite_result = supabase.table("test_suites").select("*").eq("id", suite_id).execute()
     if not suite_result.data:
         raise HTTPException(status_code=404, detail="Suite not found")
@@ -103,6 +169,8 @@ async def run_suite(suite_id: str):
     failed = 0
     results = []
 
+    active_key = gemini_key or GEMINI_API_KEY
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         for case in cases:
             try:
@@ -115,20 +183,33 @@ async def run_suite(suite_id: str):
                 expected = case["expected_output"]
                 match_type = case.get("match_type", "contains")
 
-                if match_type == "exact":
+                if match_type == "semantic" and active_key:
+                    semantic = await semantic_match(expected, actual, active_key)
+                    success = semantic["match"]
+                    reason = None if success else semantic["reason"]
+                elif match_type == "exact":
                     success = actual.strip() == expected.strip()
+                    reason = None if success else f"Expected exact match: '{expected}'"
                 elif match_type == "regex":
                     success = bool(re.search(expected, actual))
+                    reason = None if success else f"Regex '{expected}' did not match"
                 else:
                     success = expected.lower() in actual.lower()
+                    reason = None if success else f"Expected '{expected}' not found in output"
 
                 status = "passed" if success else "failed"
-                reason = None if success else f"Expected '{expected}' not found in output"
+
+                diagnosis = None
+                if not success and active_key:
+                    diagnosis = await diagnose_failure(
+                        case["input"], expected, actual, active_key
+                    )
 
             except Exception as e:
                 status = "failed"
                 actual = None
                 reason = str(e)
+                diagnosis = None
 
             if status == "passed":
                 passed += 1
@@ -143,6 +224,7 @@ async def run_suite(suite_id: str):
                 "status": status,
                 "actual_output": actual[:1000] if actual else None,
                 "reason": reason,
+                "diagnosis": diagnosis,
             }
             supabase.table("test_results").insert(result_data).execute()
             results.append(result_data)
@@ -154,7 +236,7 @@ async def run_suite(suite_id: str):
         "completed_at": datetime.utcnow().isoformat(),
     }).eq("id", run_id).execute()
 
-    return {
+    final = {
         "run_id": run_id,
         "total": len(cases),
         "passed": passed,
@@ -162,6 +244,27 @@ async def run_suite(suite_id: str):
         "status": "completed",
         "results": results
     }
+
+    webhook_url = suite.get("webhook_url")
+    if webhook_url and failed > 0:
+        await send_webhook(webhook_url, {
+            "event": "test_run_completed",
+            "suite": suite["name"],
+            "run_id": run_id,
+            "passed": passed,
+            "failed": failed,
+            "total": len(cases),
+        })
+
+    return final
+
+@app.post("/diagnose")
+async def diagnose(req: DiagnoseRequest):
+    active_key = req.api_key or GEMINI_API_KEY
+    if not active_key:
+        raise HTTPException(status_code=400, detail="No API key provided")
+    result = await diagnose_failure(req.input, req.expected_output, req.actual_output, active_key)
+    return {"diagnosis": result}
 
 @app.get("/runs")
 def list_runs():

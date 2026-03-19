@@ -16,7 +16,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.2.0")
+app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,7 +102,7 @@ async def send_webhook(webhook_url: str, payload: dict):
 
 @app.get("/")
 def root():
-    return {"name": "TestThread", "version": "0.2.0", "status": "running"}
+    return {"name": "TestThread", "version": "0.3.0", "status": "running"}
 
 @app.post("/suites")
 def create_suite(suite: SuiteCreate):
@@ -174,11 +174,14 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
     async with httpx.AsyncClient(timeout=30.0) as client:
         for case in cases:
             try:
+                start_time = datetime.utcnow()
                 response = await client.post(
                     suite["agent_endpoint"],
                     json={"input": case["input"]},
                     headers={"Content-Type": "application/json"}
                 )
+                end_time = datetime.utcnow()
+                latency_ms = int((end_time - start_time).total_seconds() * 1000)
                 actual = response.text
                 expected = case["expected_output"]
                 match_type = case.get("match_type", "contains")
@@ -210,6 +213,7 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
                 actual = None
                 reason = str(e)
                 diagnosis = None
+                latency_ms = None
 
             if status == "passed":
                 passed += 1
@@ -225,15 +229,20 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
                 "actual_output": actual[:1000] if actual else None,
                 "reason": reason,
                 "diagnosis": diagnosis,
+                "latency_ms": latency_ms if "latency_ms" in dir() else None,
             }
             supabase.table("test_results").insert(result_data).execute()
             results.append(result_data)
+
+    latencies = [r["latency_ms"] for r in results if r.get("latency_ms") is not None]
+    avg_latency = int(sum(latencies) / len(latencies)) if latencies else None
 
     supabase.table("test_runs").update({
         "status": "completed",
         "passed": passed,
         "failed": failed,
         "completed_at": datetime.utcnow().isoformat(),
+        "avg_latency_ms": avg_latency,
     }).eq("id", run_id).execute()
 
     final = {
@@ -242,6 +251,7 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
         "passed": passed,
         "failed": failed,
         "status": "completed",
+        "avg_latency_ms": avg_latency,
         "results": results
     }
 

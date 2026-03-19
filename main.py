@@ -16,7 +16,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.3.0")
+app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.4.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,7 +102,7 @@ async def send_webhook(webhook_url: str, payload: dict):
 
 @app.get("/")
 def root():
-    return {"name": "TestThread", "version": "0.3.0", "status": "running"}
+    return {"name": "TestThread", "version": "0.4.0", "status": "running"}
 
 @app.post("/suites")
 def create_suite(suite: SuiteCreate):
@@ -267,6 +267,10 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
         })
 
     return final
+
+@app.post("/trigger")
+async def trigger_run(suite_id: str, gemini_key: Optional[str] = None):
+    return await run_suite(suite_id, gemini_key)
 
 @app.post("/diagnose")
 async def diagnose(req: DiagnoseRequest):

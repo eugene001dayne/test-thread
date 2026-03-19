@@ -1,0 +1,35 @@
+name: TestThread
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run TestThread Suite
+        id: testthread
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            "https://test-thread-production.up.railway.app/trigger?suite_id=${{ secrets.TESTTHREAD_SUITE_ID }}" \
+            -H "Content-Type: application/json")
+          
+          echo "Response: $RESPONSE"
+          
+          PASSED=$(echo $RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('passed', 0))")
+          FAILED=$(echo $RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('failed', 0))")
+          TOTAL=$(echo $RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total', 0))")
+          
+          echo "✅ Passed: $PASSED"
+          echo "❌ Failed: $FAILED"
+          echo "📊 Total: $TOTAL"
+          
+          if [ "$FAILED" -gt "0" ]; then
+            echo "TestThread: $FAILED test(s) failed. Check your agent."
+            exit 1
+          fi
+          
+          echo "TestThread: All $PASSED tests passed."

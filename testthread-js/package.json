@@ -1,0 +1,14 @@
+{
+  "name": "testthread",
+  "version": "0.1.0",
+  "description": "pytest for AI agents",
+  "main": "index.js",
+  "scripts": {},
+  "keywords": ["ai", "agents", "testing", "llm", "pytest"],
+  "author": "Eugene Dayne Mawuli",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eugene001dayne/test-thread"
+  }
+}

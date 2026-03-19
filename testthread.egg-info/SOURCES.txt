@@ -1,0 +1,8 @@
+README.md
+setup.py
+testthread/__init__.py
+testthread.egg-info/PKG-INFO
+testthread.egg-info/SOURCES.txt
+testthread.egg-info/dependency_links.txt
+testthread.egg-info/requires.txt
+testthread.egg-info/top_level.txt

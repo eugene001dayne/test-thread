@@ -1,0 +1,154 @@
+Metadata-Version: 2.4
+Name: testthread
+Version: 0.1.0
+Summary: pytest for AI agents
+Home-page: https://github.com/eugene001dayne/test-thread
+Author: Eugene Dayne Mawuli
+Author-email: 
+License: Apache 2.0
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: Apache Software License
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+Requires-Dist: requests
+Dynamic: author
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: license
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+# TestThread ðŸ§µ
+
+**pytest for AI agents.**
+
+The open-source testing framework that tells you if your AI agent is actually working â€” or quietly breaking.
+
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![API](https://img.shields.io/badge/API-live-brightgreen)](https://test-thread-production.up.railway.app)
+[![Dashboard](https://img.shields.io/badge/Dashboard-live-brightgreen)](https://test-thread.lovable.app)
+
+---
+
+## The Problem
+
+You build an AI agent. It works in testing. You ship it.
+
+Then it starts hallucinating. Returning wrong formats. Calling the wrong tools. Breaking your pipeline.
+
+You find out when something downstream crashes â€” not before.
+
+**TestThread fixes that.**
+
+---
+
+## What TestThread Does
+
+Define what your agent *should* do. TestThread runs it, checks the output, and tells you exactly what passed and what failed.
+
+- âœ… Define test suites per agent
+- âœ… Add test cases with expected outputs
+- âœ… Run suites against your live agent endpoint
+- âœ… Get pass/fail results with reasons
+- âœ… Track pass rate over time
+- âœ… Catch regressions before they hit production
+
+---
+
+## Quick Start
+```bash
+pip install requests
+```
+```python
+import requests
+
+BASE = "https://test-thread-production.up.railway.app"
+
+# Create a test suite
+suite = requests.post(f"{BASE}/suites", json={
+    "name": "My Agent Tests",
+    "description": "Testing my AI agent",
+    "agent_endpoint": "https://your-agent.com/run"
+}).json()
+
+# Add a test case
+requests.post(f"{BASE}/suites/{suite['id']}/cases", json={
+    "name": "Basic response check",
+    "input": "What is 2 + 2?",
+    "expected_output": "4",
+    "match_type": "contains"
+})
+
+# Run the suite
+result = requests.post(f"{BASE}/suites/{suite['id']}/run").json()
+print(f"Passed: {result['passed']} | Failed: {result['failed']}")
+```
+
+---
+
+## Match Types
+
+| Type | Description |
+|------|-------------|
+| `contains` | Output contains the expected string |
+| `exact` | Output matches exactly |
+| `regex` | Output matches a regex pattern |
+
+---
+
+## Live Dashboard
+
+View your test results visually at **[test-thread.lovable.app](https://test-thread.lovable.app)**
+
+---
+
+## API Reference
+
+Full docs at **[test-thread-production.up.railway.app/docs](https://test-thread-production.up.railway.app/docs)**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | Health check |
+| POST | `/suites` | Create test suite |
+| GET | `/suites` | List all suites |
+| POST | `/suites/{id}/cases` | Add test case |
+| GET | `/suites/{id}/cases` | List test cases |
+| POST | `/suites/{id}/run` | Run suite |
+| GET | `/runs` | List all runs |
+| GET | `/runs/{id}` | Get run details |
+| GET | `/dashboard/stats` | Dashboard stats |
+
+---
+
+## Part of the Thread Suite
+
+TestThread is part of a suite of open-source reliability tools for AI agents.
+
+| Tool | What it does |
+|------|-------------|
+| [Iron-Thread](https://github.com/eugene001dayne/iron-thread) | Validates AI output structure before it hits your database |
+| **TestThread** | Tests whether your agent behaves correctly across runs |
+| PromptThread *(coming soon)* | Versions and tracks prompt performance over time |
+
+---
+
+## Self-Host
+```bash
+git clone https://github.com/eugene001dayne/test-thread.git
+cd test-thread
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
+---
+
+## License
+
+Apache 2.0 â€” free to use, modify, and distribute.
+
+---
+
+Built for developers who ship AI agents and need to know they work.

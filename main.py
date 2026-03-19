@@ -9,6 +9,23 @@ from pydantic import BaseModel
 from typing import Optional
 from supabase import create_client, Client
 import os
+PII_PATTERNS = {
+    "email": r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+",
+    "phone": r"\b(\+?1?\s?)?(\(?\d{3}\)?[\s.-]?)(\d{3}[\s.-]?\d{4})\b",
+    "credit_card": r"\b(?:\d{4}[\s-]?){3}\d{4}\b",
+    "api_key": r"\b[A-Za-z0-9]{32,45}\b",
+    "ssn": r"\b\d{3}-\d{2}-\d{4}\b",
+    "ip_address": r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
+}
+
+def detect_pii(text: str) -> dict:
+    if not text:
+        return {"detected": False, "types": []}
+    found = []
+    for pii_type, pattern in PII_PATTERNS.items():
+        if re.search(pattern, text):
+            found.append(pii_type)
+    return {"detected": len(found) > 0, "types": found}
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://oigfsomrrmoditnrjgdm.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZ2Zzb21ycm1vZGl0bnJqZ2RtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4NzY3NTYsImV4cCI6MjA4OTQ1Mjc1Nn0.TPLvSzRxUMKYB-vhJa204UOv6nCI8CBx9mAmqNP7BAU")
@@ -16,7 +33,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.5.0")
+app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.6.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,7 +119,7 @@ async def send_webhook(webhook_url: str, payload: dict):
 
 @app.get("/")
 def root():
-    return {"name": "TestThread", "version": "0.5.0", "status": "running"}
+    return {"name": "TestThread", "version": "0.6.0", "status": "running"}
 
 @app.post("/suites")
 def create_suite(suite: SuiteCreate):
@@ -208,6 +225,12 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
                         case["input"], expected, actual, active_key
                     )
 
+                pii_result = detect_pii(actual)
+                if pii_result["detected"]:
+                    status = "failed"
+                    if not reason:
+                        reason = f"PII detected in output: {', '.join(pii_result['types'])}"
+
             except Exception as e:
                 status = "failed"
                 actual = None
@@ -230,6 +253,8 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
                 "reason": reason,
                 "diagnosis": diagnosis,
                 "latency_ms": latency_ms if "latency_ms" in dir() else None,
+                "pii_detected": pii_result["detected"] if "pii_result" in dir() else False,
+                "pii_types": ", ".join(pii_result["types"]) if "pii_result" in dir() and pii_result["types"] else None,
             }
             supabase.table("test_results").insert(result_data).execute()
             results.append(result_data)

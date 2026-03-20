@@ -2,13 +2,17 @@ import uuid
 import httpx
 import re
 import json
+import asyncio
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 from pydantic import BaseModel
 from typing import Optional
 from supabase import create_client, Client
 import os
+
 PII_PATTERNS = {
     "email": r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+",
     "phone": r"\b(\+?1?\s?)?(\(?\d{3}\)?[\s.-]?)(\d{3}[\s.-]?\d{4})\b",
@@ -27,13 +31,32 @@ def detect_pii(text: str) -> dict:
             found.append(pii_type)
     return {"detected": len(found) > 0, "types": found}
 
+def estimate_cost(input_text: str, output_text: str, model: str = "gemini") -> dict:
+    input_tokens = len(input_text.split()) * 1.3
+    output_tokens = len(output_text.split()) * 1.3 if output_text else 0
+    cost_per_1k = {
+        "gemini": 0.00015,
+        "gpt-4": 0.03,
+        "gpt-3.5": 0.002,
+        "claude": 0.008,
+    }
+    rate = cost_per_1k.get(model, 0.00015)
+    total_tokens = input_tokens + output_tokens
+    cost = (total_tokens / 1000) * rate
+    return {
+        "input_tokens": int(input_tokens),
+        "output_tokens": int(output_tokens),
+        "estimated_cost_usd": round(cost, 6),
+    }
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://oigfsomrrmoditnrjgdm.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZ2Zzb21ycm1vZGl0bnJqZ2RtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4NzY3NTYsImV4cCI6MjA4OTQ1Mjc1Nn0.TPLvSzRxUMKYB-vhJa204UOv6nCI8CBx9mAmqNP7BAU")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+scheduler = AsyncIOScheduler()
 
-app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.7.0")
+app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.8.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,6 +64,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup():
+    scheduler.add_job(
+        run_scheduled_suites,
+        IntervalTrigger(minutes=30),
+        id="scheduled_runs",
+        replace_existing=True
+    )
+    scheduler.start()
+
+@app.on_event("shutdown")
+async def shutdown():
+    scheduler.shutdown()
 
 class SuiteCreate(BaseModel):
     name: str
@@ -62,32 +99,13 @@ class DiagnoseRequest(BaseModel):
     api_key: Optional[str] = None
     provider: Optional[str] = "gemini"
 
-def estimate_cost(input_text: str, output_text: str, model: str = "gemini") -> dict:
-    input_tokens = len(input_text.split()) * 1.3
-    output_tokens = len(output_text.split()) * 1.3 if output_text else 0
-
-    cost_per_1k = {
-        "gemini": 0.00015,
-        "gpt-4": 0.03,
-        "gpt-3.5": 0.002,
-        "claude": 0.008,
-    }
-
-    rate = cost_per_1k.get(model, 0.00015)
-    total_tokens = input_tokens + output_tokens
-    cost = (total_tokens / 1000) * rate
-
-    return {
-        "input_tokens": int(input_tokens),
-        "output_tokens": int(output_tokens),
-        "estimated_cost_usd": round(cost, 6),
-    }
+class ScheduleUpdate(BaseModel):
+    schedule: Optional[str] = None
+    schedule_enabled: bool = False
 
 async def call_gemini(prompt: str, api_key: str) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
-    }
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(url, json=payload)
         data = response.json()
@@ -102,7 +120,6 @@ Actual output: {actual}
 Does the actual output convey the same meaning as expected, even if worded differently?
 Reply in this exact JSON format with no extra text:
 {{"match": true or false, "reason": "one sentence explanation"}}"""
-
     try:
         result = await call_gemini(prompt, api_key)
         cleaned = result.strip().replace("```json", "").replace("```", "").strip()
@@ -125,7 +142,6 @@ Provide:
 3. A specific suggestion to fix it
 
 Be concise and practical. Max 150 words."""
-
     try:
         return await call_gemini(prompt, api_key)
     except Exception as e:
@@ -138,9 +154,46 @@ async def send_webhook(webhook_url: str, payload: dict):
     except Exception:
         pass
 
+async def run_scheduled_suites():
+    try:
+        suites = supabase.table("test_suites").select("*").eq("schedule_enabled", True).execute()
+        for suite in suites.data:
+            schedule = suite.get("schedule", "")
+            last_run = suite.get("last_scheduled_run")
+            now = datetime.utcnow()
+            should_run = False
+            if schedule == "hourly":
+                if not last_run:
+                    should_run = True
+                else:
+                    last = datetime.fromisoformat(last_run.replace("Z", "+00:00")).replace(tzinfo=None)
+                    should_run = (now - last).total_seconds() >= 3600
+            elif schedule == "daily":
+                if not last_run:
+                    should_run = True
+                else:
+                    last = datetime.fromisoformat(last_run.replace("Z", "+00:00")).replace(tzinfo=None)
+                    should_run = (now - last).total_seconds() >= 86400
+            elif schedule == "weekly":
+                if not last_run:
+                    should_run = True
+                else:
+                    last = datetime.fromisoformat(last_run.replace("Z", "+00:00")).replace(tzinfo=None)
+                    should_run = (now - last).total_seconds() >= 604800
+            if should_run:
+                try:
+                    await run_suite(suite["id"])
+                    supabase.table("test_suites").update({
+                        "last_scheduled_run": now.isoformat()
+                    }).eq("id", suite["id"]).execute()
+                except Exception as e:
+                    print(f"Scheduled run failed for suite {suite['id']}: {e}")
+    except Exception as e:
+        print(f"Scheduler error: {e}")
+
 @app.get("/")
 def root():
-    return {"name": "TestThread", "version": "0.7.0", "status": "running"}
+    return {"name": "TestThread", "version": "0.8.0", "status": "running"}
 
 @app.post("/suites")
 def create_suite(suite: SuiteCreate):
@@ -206,11 +259,12 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
     passed = 0
     failed = 0
     results = []
-
     active_key = gemini_key or GEMINI_API_KEY
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         for case in cases:
+            latency_ms = None
+            pii_result = {"detected": False, "types": []}
             try:
                 start_time = datetime.utcnow()
                 response = await client.post(
@@ -242,9 +296,7 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
 
                 diagnosis = None
                 if not success and active_key:
-                    diagnosis = await diagnose_failure(
-                        case["input"], expected, actual, active_key
-                    )
+                    diagnosis = await diagnose_failure(case["input"], expected, actual, active_key)
 
                 pii_result = detect_pii(actual)
                 if pii_result["detected"]:
@@ -257,7 +309,6 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
                 actual = None
                 reason = str(e)
                 diagnosis = None
-                latency_ms = None
 
             if status == "passed":
                 passed += 1
@@ -275,9 +326,9 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
                 "actual_output": actual[:1000] if actual else None,
                 "reason": reason,
                 "diagnosis": diagnosis,
-                "latency_ms": latency_ms if "latency_ms" in dir() else None,
-                "pii_detected": pii_result["detected"] if "pii_result" in dir() else False,
-                "pii_types": ", ".join(pii_result["types"]) if "pii_result" in dir() and pii_result["types"] else None,
+                "latency_ms": latency_ms,
+                "pii_detected": pii_result["detected"],
+                "pii_types": ", ".join(pii_result["types"]) if pii_result["types"] else None,
                 "input_tokens": cost_data["input_tokens"],
                 "output_tokens": cost_data["output_tokens"],
                 "estimated_cost_usd": cost_data["estimated_cost_usd"],
@@ -287,24 +338,14 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
 
     latencies = [r["latency_ms"] for r in results if r.get("latency_ms") is not None]
     avg_latency = int(sum(latencies) / len(latencies)) if latencies else None
-
     total_cost = round(sum(r.get("estimated_cost_usd", 0) for r in results), 6)
-
     total = len(cases)
     curr_pass_rate = round((passed / total) * 100, 1) if total > 0 else 0
 
-    prev_runs = supabase.table("test_runs")\
-        .select("*")\
-        .eq("suite_id", suite_id)\
-        .eq("status", "completed")\
-        .neq("id", run_id)\
-        .order("created_at", desc=True)\
-        .limit(1)\
-        .execute()
+    prev_runs = supabase.table("test_runs").select("*").eq("suite_id", suite_id).eq("status", "completed").neq("id", run_id).order("created_at", desc=True).limit(1).execute()
 
     regression = False
     prev_pass_rate = None
-
     if prev_runs.data:
         prev_run = prev_runs.data[0]
         prev_total = prev_run.get("total", 0)
@@ -356,25 +397,46 @@ async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
 
     return final
 
+@app.post("/suites/{suite_id}/schedule")
+def update_schedule(suite_id: str, update: ScheduleUpdate):
+    if update.schedule and update.schedule not in ["hourly", "daily", "weekly"]:
+        raise HTTPException(status_code=400, detail="schedule must be hourly, daily, or weekly")
+    result = supabase.table("test_suites").update({
+        "schedule": update.schedule,
+        "schedule_enabled": update.schedule_enabled,
+    }).eq("id", suite_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Suite not found")
+    return result.data[0]
+
+@app.get("/suites/{suite_id}/schedule")
+def get_schedule(suite_id: str):
+    result = supabase.table("test_suites").select("*").eq("id", suite_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Suite not found")
+    suite = result.data[0]
+    return {
+        "suite_id": suite_id,
+        "schedule": suite.get("schedule"),
+        "schedule_enabled": suite.get("schedule_enabled", False),
+        "last_scheduled_run": suite.get("last_scheduled_run"),
+    }
+
 @app.post("/trigger")
 async def trigger_run(suite_id: str, gemini_key: Optional[str] = None):
     return await run_suite(suite_id, gemini_key)
 
 @app.post("/suites/{suite_id}/import-csv")
 async def import_csv(suite_id: str, request: Request):
-    from fastapi import Request
     body = await request.body()
     text = body.decode("utf-8")
     lines = text.strip().split("\n")
-
     if len(lines) < 2:
         raise HTTPException(status_code=400, detail="CSV must have a header and at least one row")
-
     headers = [h.strip().lower() for h in lines[0].split(",")]
     required = {"name", "input", "expected_output"}
     if not required.issubset(set(headers)):
-        raise HTTPException(status_code=400, detail=f"CSV must have columns: name, input, expected_output. Optional: match_type, description")
-
+        raise HTTPException(status_code=400, detail="CSV must have columns: name, input, expected_output")
     imported = []
     for line in lines[1:]:
         if not line.strip():
@@ -393,7 +455,6 @@ async def import_csv(suite_id: str, request: Request):
         }
         supabase.table("test_cases").insert(data).execute()
         imported.append(data)
-
     return {"imported": len(imported), "cases": imported}
 
 @app.post("/diagnose")
@@ -422,10 +483,8 @@ def dashboard_stats():
     runs = supabase.table("test_runs").select("*").execute()
     suites = supabase.table("test_suites").select("*").execute()
     cases = supabase.table("test_cases").select("*").execute()
-
     total_passed = sum(r["passed"] for r in runs.data)
     total_failed = sum(r["failed"] for r in runs.data)
-
     return {
         "total_suites": len(suites.data),
         "total_cases": len(cases.data),

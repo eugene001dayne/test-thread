@@ -3,3 +3,4 @@ uvicorn
 supabase
 httpx
 pydantic
+apscheduler

@@ -5,3 +5,4 @@ httpx
 pydantic
 apscheduler
 slowapi
+python-multipart

@@ -60,7 +60,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 scheduler = AsyncIOScheduler()
 limiter = Limiter(key_func=get_remote_address)
 
-app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.9.0")
+app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.10.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -108,6 +108,62 @@ class DiagnoseRequest(BaseModel):
 class ScheduleUpdate(BaseModel):
     schedule: Optional[str] = None
     schedule_enabled: bool = False
+
+class TrajectoryStep(BaseModel):
+    tool: Optional[str] = None
+    action: Optional[str] = None
+    input: Optional[str] = None
+    output: Optional[str] = None
+    order: Optional[int] = None
+
+class TrajectorySubmit(BaseModel):
+    run_id: str
+    case_id: str
+    case_name: Optional[str] = None
+    steps: list[TrajectoryStep]
+
+def evaluate_trajectory(steps: list, assertions: list) -> dict:
+    failures = []
+    tools_used = [s.get("tool", "") for s in steps if s.get("tool")]
+    actions_used = [s.get("action", "") for s in steps if s.get("action")]
+    step_count = len(steps)
+
+    for assertion in assertions:
+        assertion_type = assertion.get("type")
+        value = assertion.get("value")
+
+        if assertion_type == "tool_called":
+            if value not in tools_used:
+                failures.append(f"Expected tool '{value}' was not called")
+
+        elif assertion_type == "tool_not_called":
+            if value in tools_used:
+                failures.append(f"Tool '{value}' was called but should not have been")
+
+        elif assertion_type == "max_steps":
+            if step_count > int(value):
+                failures.append(f"Agent used {step_count} steps, max allowed is {value}")
+
+        elif assertion_type == "min_steps":
+            if step_count < int(value):
+                failures.append(f"Agent used {step_count} steps, min required is {value}")
+
+        elif assertion_type == "tool_order":
+            expected_order = value
+            actual_order = [s.get("tool") for s in steps if s.get("tool") in expected_order]
+            if actual_order != expected_order:
+                failures.append(f"Tools called in wrong order. Expected {expected_order}, got {actual_order}")
+
+        elif assertion_type == "action_called":
+            if value not in actions_used:
+                failures.append(f"Expected action '{value}' was not performed")
+
+    return {
+        "passed": len(failures) == 0,
+        "failures": failures,
+        "step_count": step_count,
+        "tools_used": tools_used,
+    }
 
 async def call_gemini(prompt: str, api_key: str) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
@@ -199,7 +255,7 @@ async def run_scheduled_suites():
 
 @app.get("/")
 def root():
-    return {"name": "TestThread", "version": "0.9.0", "status": "running"}
+    return {"name": "TestThread", "version": "0.10.0", "status": "running"}
 
 @app.post("/suites")
 def create_suite(suite: SuiteCreate):
@@ -428,6 +484,62 @@ def get_schedule(suite_id: str):
         "schedule_enabled": suite.get("schedule_enabled", False),
         "last_scheduled_run": suite.get("last_scheduled_run"),
     }
+
+@app.post("/trajectory")
+async def submit_trajectory(traj: TrajectorySubmit):
+    traj_id = str(uuid.uuid4())
+    steps_data = [s.dict() for s in traj.steps]
+
+    supabase.table("trajectories").insert({
+        "id": traj_id,
+        "run_id": traj.run_id,
+        "case_id": str(traj.case_id),
+        "case_name": traj.case_name,
+        "steps": steps_data,
+    }).execute()
+
+    case_result = supabase.table("test_cases").select("*").eq("id", str(traj.case_id)).execute()
+    trajectory_passed = True
+    trajectory_failures = []
+
+    if case_result.data:
+        case = case_result.data[0]
+        assertions = case.get("trajectory_assertions") or []
+        if assertions:
+            eval_result = evaluate_trajectory(steps_data, assertions)
+            trajectory_passed = eval_result["passed"]
+            trajectory_failures = eval_result["failures"]
+
+            supabase.table("test_results").update({
+                "trajectory_passed": trajectory_passed,
+                "trajectory_failures": trajectory_failures,
+            }).eq("run_id", traj.run_id).eq("case_id", str(traj.case_id)).execute()
+
+            if not trajectory_passed:
+                supabase.table("test_runs").update({
+                    "failed": supabase.table("test_runs").select("failed").eq("id", traj.run_id).execute().data[0]["failed"] + 1
+                }).eq("id", traj.run_id).execute()
+
+    return {
+        "trajectory_id": traj_id,
+        "trajectory_passed": trajectory_passed,
+        "trajectory_failures": trajectory_failures,
+        "steps_recorded": len(steps_data),
+    }
+
+@app.post("/suites/{suite_id}/cases/{case_id}/assertions")
+def set_trajectory_assertions(suite_id: str, case_id: str, assertions: list):
+    result = supabase.table("test_cases").update({
+        "trajectory_assertions": assertions
+    }).eq("id", case_id).eq("suite_id", suite_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    return {"case_id": case_id, "assertions": assertions}
+
+@app.get("/trajectories/{run_id}")
+def get_trajectories(run_id: str):
+    result = supabase.table("trajectories").select("*").eq("run_id", run_id).execute()
+    return result.data
 
 @app.post("/trigger")
 @limiter.limit("10/minute")

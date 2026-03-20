@@ -4,3 +4,4 @@ supabase
 httpx
 pydantic
 apscheduler
+slowapi

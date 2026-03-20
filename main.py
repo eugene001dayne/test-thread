@@ -5,6 +5,9 @@ import json
 import asyncio
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -55,8 +58,9 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 scheduler = AsyncIOScheduler()
+limiter = Limiter(key_func=get_remote_address)
 
-app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.8.0")
+app = FastAPI(title="TestThread", description="pytest for AI agents", version="0.9.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,6 +68,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 @app.on_event("startup")
 async def startup():
@@ -193,7 +199,7 @@ async def run_scheduled_suites():
 
 @app.get("/")
 def root():
-    return {"name": "TestThread", "version": "0.8.0", "status": "running"}
+    return {"name": "TestThread", "version": "0.9.0", "status": "running"}
 
 @app.post("/suites")
 def create_suite(suite: SuiteCreate):
@@ -234,7 +240,8 @@ def list_cases(suite_id: str):
     return result.data
 
 @app.post("/suites/{suite_id}/run")
-async def run_suite(suite_id: str, gemini_key: Optional[str] = None):
+@limiter.limit("10/minute")
+async def run_suite(request: Request, suite_id: str, gemini_key: Optional[str] = None):
     suite_result = supabase.table("test_suites").select("*").eq("id", suite_id).execute()
     if not suite_result.data:
         raise HTTPException(status_code=404, detail="Suite not found")
@@ -423,8 +430,9 @@ def get_schedule(suite_id: str):
     }
 
 @app.post("/trigger")
-async def trigger_run(suite_id: str, gemini_key: Optional[str] = None):
-    return await run_suite(suite_id, gemini_key)
+@limiter.limit("10/minute")
+async def trigger_run(request: Request, suite_id: str, gemini_key: Optional[str] = None):
+    return await run_suite(request, suite_id, gemini_key)
 
 @app.post("/suites/{suite_id}/import-csv")
 async def import_csv(suite_id: str, request: Request):

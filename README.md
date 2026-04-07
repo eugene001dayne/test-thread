@@ -198,7 +198,8 @@ TestThread is one of a few open-source reliability tools for AI agents.
 |------|---------------|
 | [Iron-Thread](https://github.com/eugene001dayne/iron-thread) | Validates AI output structure before it hits your database |
 | **TestThread** | Tests whether your agent behaves correctly across runs |
-| PromptThread *(coming soon)* | Versions and tracks prompt performance over time |
+| **PromptThread** | Versions and tracks prompt performance over time |
+| **ChainThread** | Agent handoff protocol and verification infrastructure. 
 
 ---
 

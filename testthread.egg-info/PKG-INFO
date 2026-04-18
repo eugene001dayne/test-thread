@@ -1,143 +1,211 @@
 Metadata-Version: 2.4
 Name: testthread
-Version: 0.10.0
-Summary: pytest for AI agents
+Version: 0.12.0
+Summary: pytest for AI agents. Test, monitor, and catch behavioral drift.
 Home-page: https://github.com/eugene001dayne/test-thread
 Author: Eugene Dayne Mawuli
-Author-email: 
-License: Apache 2.0
+Author-email: bitelance.team@gmail.com
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: Apache Software License
-Requires-Python: >=3.7
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 License-File: LICENSE
-Requires-Dist: requests
+Requires-Dist: httpx
 Dynamic: author
+Dynamic: author-email
 Dynamic: classifier
 Dynamic: description
 Dynamic: description-content-type
 Dynamic: home-page
-Dynamic: license
 Dynamic: license-file
 Dynamic: requires-dist
 Dynamic: requires-python
 Dynamic: summary
 
-# TestThread ðŸ§µ
+# TestThread
 
 **pytest for AI agents.**
 
-The open-source testing framework that tells you if your AI agent is actually working â€” or quietly breaking.
+Open-source testing framework that tells you whether your AI agent actually works or just quietly breaks.
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
-[![API](https://img.shields.io/badge/API-live-brightgreen)](https://test-thread-production.up.railway.app)
-[![Dashboard](https://img.shields.io/badge/Dashboard-live-brightgreen)](https://test-thread.lovable.app)
-
----
-
-## The Problem
-
-You build an AI agent. It works in testing. You ship it.
+You build an AI agent. It passes your manual tests. You ship it.
 
 Then it starts hallucinating. Returning wrong formats. Calling the wrong tools. Breaking your pipeline.
 
-You find out when something downstream crashes â€” not before.
+You find out when something downstream crashes not before.
 
-**TestThread fixes that.**
-
----
-
-## What TestThread Does
-
-Define what your agent *should* do. TestThread runs it, checks the output, and tells you exactly what passed and what failed.
-
-- âœ… Define test suites per agent
-- âœ… Add test cases with expected outputs
-- âœ… Run suites against your live agent endpoint
-- âœ… Get pass/fail results with reasons
-- âœ… Track pass rate over time
-- âœ… Catch regressions before they hit production
+TestThread fixes that.
 
 ---
 
-## Quick Start
+## What it does
+
+Tell TestThread what your agent *should* do. It runs the agent, checks the output, and tells you exactly what passed and what failed, plus an AI diagnosis explaining why.
+
+---
+
+## Features
+
+- **Test Suites** â€” group test cases per agent
+- **4 Match Types** â€” contains, exact, regex, semantic (AI-powered)
+- **AI Diagnosis** â€” when a test fails, it explains why and suggests a fix
+- **Regression Detection** â€” flags when pass rate drops vs previous run
+- **PII Detection** â€” auto-fails if agent leaks emails, keys, SSNs, or credit cards
+- **Latency Tracking** â€” response time per test, average per run
+- **Cost Estimation** â€” estimated token cost per run
+- **Trajectory Assertions** â€” test agent steps, not just output
+- **Scheduled Runs** â€” run suites hourly, daily, or weekly
+- **CI/CD Integration** â€” GitHub Action runs tests on every push
+- **Webhook Alerts** â€” get notified when tests fail or regress
+- **CSV Import** â€” bulk import test cases from a spreadsheet
+- **Rate Limiting** â€” API protected from abuse
+
+---
+
+## Quick start
+
 ```bash
-pip install requests
+pip install testthread
 ```
+
 ```python
-import requests
+from testthread import TestThread
 
-BASE = "https://test-thread-production.up.railway.app"
+tt = TestThread(gemini_key="your-gemini-key")
 
-# Create a test suite
-suite = requests.post(f"{BASE}/suites", json={
-    "name": "My Agent Tests",
-    "description": "Testing my AI agent",
-    "agent_endpoint": "https://your-agent.com/run"
-}).json()
+suite = tt.create_suite(
+    name="My Agent Tests",
+    agent_endpoint="https://your-agent.com/run"
+)
 
-# Add a test case
-requests.post(f"{BASE}/suites/{suite['id']}/cases", json={
-    "name": "Basic response check",
-    "input": "What is 2 + 2?",
-    "expected_output": "4",
-    "match_type": "contains"
-})
+tt.add_case(
+    suite_id=suite["id"],
+    name="Basic response check",
+    input="What is 2 + 2?",
+    expected_output="4",
+    match_type="contains"
+)
 
-# Run the suite
-result = requests.post(f"{BASE}/suites/{suite['id']}/run").json()
+tt.add_case(
+    suite_id=suite["id"],
+    name="Semantic check",
+    input="Say hello",
+    expected_output="a friendly greeting",
+    match_type="semantic"
+)
+
+result = tt.run_suite(suite["id"])
 print(f"Passed: {result['passed']} | Failed: {result['failed']}")
+print(f"Pass Rate: {result['curr_pass_rate']}%")
+print(f"Estimated Cost: ${result['estimated_cost_usd']}")
+```
+
+Same thing in JavaScript:
+
+```bash
+npm install testthread
+```
+
+```javascript
+const TestThread = require("testthread");
+
+const tt = new TestThread("https://test-thread-production.up.railway.app", "your-gemini-key");
+
+const suite = await tt.createSuite("My Agent", "https://your-agent.com/run");
+await tt.addCase(suite.id, "Hello test", "Say hi", "hello", "contains");
+const result = await tt.runSuite(suite.id);
+console.log(`Passed: ${result.passed} | Failed: ${result.failed}`);
 ```
 
 ---
 
-## Match Types
+## Match types
 
-| Type | Description |
-|------|-------------|
+| Type | What it does |
+|------|---------------|
 | `contains` | Output contains the expected string |
 | `exact` | Output matches exactly |
 | `regex` | Output matches a regex pattern |
+| `semantic` | AI judges if meaning matches (requires Gemini key) |
 
 ---
 
-## Live Dashboard
+## Trajectory assertions
 
-View your test results visually at **[test-thread.lovable.app](https://test-thread.lovable.app)**
+Test not just *what* your agent returned, but *how* it got there.
+
+```python
+import requests
+
+# Set assertions on a test case
+requests.post(f"{BASE}/suites/{suite_id}/cases/{case_id}/assertions", json=[
+    {"type": "tool_called", "value": "search"},
+    {"type": "tool_not_called", "value": "delete_user"},
+    {"type": "max_steps", "value": 5}
+])
+
+# After your agent runs, submit its trajectory
+requests.post(f"{BASE}/trajectory", json={
+    "run_id": run_id,
+    "case_id": case_id,
+    "steps": [
+        {"tool": "search", "input": "query", "output": "results", "order": 1},
+        {"tool": "summarize", "input": "results", "output": "summary", "order": 2}
+    ]
+})
+```
+
+**Supported assertion types:**
+- `tool_called` â€” assert a tool was used
+- `tool_not_called` â€” assert a tool was NOT used
+- `max_steps` â€” assert agent completed in N steps or fewer
+- `min_steps` â€” assert agent took at least N steps
+- `tool_order` â€” assert tools were called in a specific order
+- `action_called` â€” assert a specific action was performed
 
 ---
 
-## API Reference
+## CI/CD integration
+
+Add one file to your repo and TestThread runs on every push:
+
+1. Add your suite ID to GitHub Secrets as `TESTTHREAD_SUITE_ID`
+2. Copy `.github/workflows/testthread.yml` from this repo into your project
+
+Every push to main runs your agent tests automatically. Fails the build if tests regress.
+
+---
+
+## Scheduled runs
+
+```python
+import requests
+
+requests.post(f"{BASE}/suites/{suite_id}/schedule", json={
+    "schedule": "daily",
+    "schedule_enabled": True
+})
+```
+
+Options: `hourly`, `daily`, `weekly`
+
+---
+
+## Live dashboard
+
+View all your test results at **[test-thread.lovable.app](https://test-thread.lovable.app)**
+
+---
+
+## API reference
 
 Full docs at **[test-thread-production.up.railway.app/docs](https://test-thread-production.up.railway.app/docs)**
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Health check |
-| POST | `/suites` | Create test suite |
-| GET | `/suites` | List all suites |
-| POST | `/suites/{id}/cases` | Add test case |
-| GET | `/suites/{id}/cases` | List test cases |
-| POST | `/suites/{id}/run` | Run suite |
-| GET | `/runs` | List all runs |
-| GET | `/runs/{id}` | Get run details |
-| GET | `/dashboard/stats` | Dashboard stats |
-
 ---
 
-## Part of the Thread Suite
+## Self-host
 
-TestThread is part of a suite of open-source reliability tools for AI agents.
-
-| Tool | What it does |
-|------|-------------|
-| [Iron-Thread](https://github.com/eugene001dayne/iron-thread) | Validates AI output structure before it hits your database |
-| **TestThread** | Tests whether your agent behaves correctly across runs |
-| PromptThread *(coming soon)* | Versions and tracks prompt performance over time |
-
----
-
-## Self-Host
 ```bash
 git clone https://github.com/eugene001dayne/test-thread.git
 cd test-thread
@@ -147,9 +215,22 @@ uvicorn main:app --reload
 
 ---
 
+## Part of the Thread Suite
+
+TestThread is one of a few open-source reliability tools for AI agents.
+
+| Tool | What it does |
+|------|---------------|
+| [Iron-Thread](https://github.com/eugene001dayne/iron-thread) | Validates AI output structure before it hits your database |
+| **TestThread** | Tests whether your agent behaves correctly across runs |
+| **PromptThread** | Versions and tracks prompt performance over time |
+| **ChainThread** | Agent handoff protocol and verification infrastructure. 
+
+---
+
 ## License
 
-Apache 2.0 â€” free to use, modify, and distribute.
+Apache 2.0  | free to use, modify, and distribute.
 
 ---
 

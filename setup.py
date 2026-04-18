@@ -2,19 +2,19 @@ from setuptools import setup, find_packages
 
 setup(
     name="testthread",
-    version="0.10.0",
-    packages=find_packages(),
-    install_requires=["requests"],
-    author="Eugene Dayne Mawuli",
-    author_email="",
-    description="pytest for AI agents",
-    long_description=open("README.md").read(),
+    version="0.12.0",
+    description="pytest for AI agents. Test, monitor, and catch behavioral drift.",
+    long_description=open("README.md").read() if __import__("os").path.exists("README.md") else "",
     long_description_content_type="text/markdown",
+    author="Eugene Dayne Mawuli",
+    author_email="bitelance.team@gmail.com",
     url="https://github.com/eugene001dayne/test-thread",
-    license="Apache 2.0",
+    packages=find_packages(),
+    install_requires=["httpx"],
+    python_requires=">=3.8",
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: Apache Software License",
+        "Operating System :: OS Independent",
     ],
-    python_requires=">=3.7",
 )

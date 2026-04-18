@@ -1,14 +1,19 @@
 {
   "name": "testthread",
-  "version": "0.10.0",
-  "description": "pytest for AI agents",
+  "version": "0.12.0",
+  "description": "pytest for AI agents. Test, monitor, and catch behavioral drift.",
   "main": "index.js",
-  "scripts": {},
-  "keywords": ["ai", "agents", "testing", "llm", "pytest"],
+  "scripts": {
+    "test": "echo \"No tests\" && exit 0"
+  },
   "author": "Eugene Dayne Mawuli",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/eugene001dayne/test-thread",
   "repository": {
     "type": "git",
     "url": "https://github.com/eugene001dayne/test-thread"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.7"
   }
 }

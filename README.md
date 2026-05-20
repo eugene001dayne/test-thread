@@ -10,6 +10,8 @@ Then it starts hallucinating. Returning wrong formats. Calling the wrong tools. 
 
 TestThread fixes that.
 
+Learn more at threadsuite.netlify.app
+
 ---
 
 ## What it does

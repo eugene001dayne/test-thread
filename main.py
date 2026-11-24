@@ -18,6 +18,7 @@ from slowapi.errors import RateLimitExceeded
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -92,13 +93,15 @@ def estimate_cost(input_text: str, output_text: str, model: str = "gemini"):
     }
 
 # ── Gemini helper ─────────────────────────────────────────────────────────────
-def gemini_call(prompt: str) -> str:
-    if not GEMINI_API_KEY:
+def gemini_call(prompt: str, key: str = None) -> str:
+    key = key or GEMINI_API_KEY
+    if not key:
         return ""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    headers = {"x-goog-api-key": key}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
-        r = httpx.post(url, json=payload, timeout=30)
+        r = httpx.post(url, headers=headers, json=payload, timeout=30)
         r.raise_for_status()
         return r.json()["candidates"][0]["content"]["parts"][0]["text"]
     except Exception:

@@ -33,6 +33,16 @@ class JudgeServerError(JudgeError):
     retryable = True
 
 
+class JudgeNetworkError(JudgeError):
+    """Could not reach the provider at all (timeout, dropped connection, DNS)."""
+
+    retryable = True
+
+
+class JudgeResponseError(JudgeError):
+    """The provider answered, but with nothing usable (blocked prompt, empty text, odd shape)."""
+
+
 def error_for_status(status_code, retry_after=None):
     if status_code in (401, 403):
         cls = JudgeAuthError

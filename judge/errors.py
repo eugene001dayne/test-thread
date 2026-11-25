@@ -41,6 +41,10 @@ class JudgeNetworkError(JudgeError):
 
 class JudgeResponseError(JudgeError):
     """The provider answered, but with nothing usable (blocked prompt, empty text, odd shape)."""
+    
+    
+class JudgeConfigError(JudgeError):
+    """The judge is not set up correctly (missing provider, model or key). Fix the settings."""
 
 
 def error_for_status(status_code, retry_after=None):

@@ -1,6 +1,7 @@
 import httpx
 
 from judge.errors import JudgeNetworkError, JudgeResponseError, error_for_status
+from judge.detail import extract_detail
 from judge.headers import parse_retry_after
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -36,7 +37,7 @@ class OpenAICompatAdapter:
 
         if response.status_code != 200:
             retry_after = parse_retry_after(response.headers.get("Retry-After"))
-            raise error_for_status(response.status_code, retry_after=retry_after)
+            raise error_for_status(response.status_code, retry_after=retry_after, detail=extract_detail(response.text, secrets=(self.api_key,)))
 
         try:
             text = response.json()["choices"][0]["message"]["content"]

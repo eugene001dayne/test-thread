@@ -13,6 +13,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from judge.core import ask
+from judge.errors import JudgeConfigError, JudgeError
+from judge.factory import build_adapter
 
 # ── Environment ──────────────────────────────────────────────────────────────
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -605,6 +608,17 @@ class TriggerRequest(BaseModel):
 async def trigger_run(request: Request, body: TriggerRequest):
     return await _run_suite_logic(body.suite_id, body.gemini_key)
 
+# ── Judge helpers ─────────────────────────────────────────────────────────────
+def ask_judge(prompt: str, api_key: Optional[str] = None):
+    """Ask whichever judge model is configured (JUDGE_* settings, or old GEMINI_API_KEY)."""
+    return ask(prompt, build_adapter(os.environ, api_key=api_key))
+
+
+def judge_http_error(err: JudgeError) -> HTTPException:
+    # Setup problems are the user's to fix (400). Provider problems are upstream (502).
+    status = 400 if isinstance(err, JudgeConfigError) else 502
+    return HTTPException(status_code=status, detail=str(err))
+
 # ── Diagnose ──────────────────────────────────────────────────────────────────
 class DiagnoseRequest(BaseModel):
     input: str
@@ -613,14 +627,18 @@ class DiagnoseRequest(BaseModel):
 
 @app.post("/diagnose")
 def diagnose(body: DiagnoseRequest):
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=400, detail="GEMINI_API_KEY not set")
     prompt = (
         f"A test failed for an AI agent. Diagnose why and suggest a fix.\n\n"
         f"Input: {body.input}\nExpected: {body.expected_output}\nActual: {body.actual_output}"
     )
-    diagnosis = gemini_call(prompt)
-    return {"diagnosis": diagnosis}
+    try:
+        result = ask_judge(prompt)
+    except JudgeError as err:
+        raise judge_http_error(err) from err
+    return {
+        "diagnosis": result.text,
+        "judge": {"provider": result.provider, "model": result.model},
+    }
 
 # ── Runs ──────────────────────────────────────────────────────────────────────
 @app.get("/runs")

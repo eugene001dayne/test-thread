@@ -15,9 +15,12 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from judge.core import ask
 from judge.errors import JudgeConfigError, JudgeError
+from judge.detail import extract_detail
 from judge.factory import build_adapter
+from envfile import load_env_file
 
 # ── Environment ──────────────────────────────────────────────────────────────
+load_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), os.environ)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")

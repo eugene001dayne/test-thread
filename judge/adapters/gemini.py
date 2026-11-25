@@ -1,17 +1,9 @@
 import httpx
 
 from judge.errors import JudgeNetworkError, JudgeResponseError, error_for_status
+from judge.headers import parse_retry_after
 
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-
-
-def _parse_retry_after(value):
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except ValueError:
-        return None
 
 
 class GeminiAdapter:
@@ -37,7 +29,7 @@ class GeminiAdapter:
             ) from exc
 
         if response.status_code != 200:
-            retry_after = _parse_retry_after(response.headers.get("Retry-After"))
+            retry_after = parse_retry_after(response.headers.get("Retry-After"))
             raise error_for_status(response.status_code, retry_after=retry_after)
 
         try:

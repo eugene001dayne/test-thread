@@ -47,7 +47,7 @@ class JudgeConfigError(JudgeError):
     """The judge is not set up correctly (missing provider, model or key). Fix the settings."""
 
 
-def error_for_status(status_code, retry_after=None):
+def error_for_status(status_code, retry_after=None, detail=None):
     if status_code in (401, 403):
         cls = JudgeAuthError
         text = "API key was rejected. Check JUDGE_API_KEY."
@@ -63,4 +63,7 @@ def error_for_status(status_code, retry_after=None):
     else:
         cls = JudgeRequestError
         text = "The provider rejected the request."
-    return cls(f"{text} (HTTP {status_code})", status_code=status_code, retry_after=retry_after)
+    message = f"{text} (HTTP {status_code})"
+    if detail:
+        message += f": {detail}"
+    return cls(message, status_code=status_code, retry_after=retry_after)

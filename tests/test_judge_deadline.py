@@ -1,7 +1,7 @@
 import pytest
 
 from judge.core import ask
-from judge.errors import JudgeServerError, error_for_status
+from judge.errors import JudgeRateLimitError, JudgeServerError, error_for_status
 
 
 class FakeClock:
@@ -50,7 +50,7 @@ def test_stops_retrying_when_the_next_wait_would_cross_the_deadline():
 def test_gives_up_at_once_if_retry_after_exceeds_the_budget():
     clock = FakeClock()
     adapter = FailingAdapter(clock, 0, error_for_status(429, retry_after=25))
-    with pytest.raises(Exception):
+    with pytest.raises(JudgeRateLimitError):
         ask("hi", adapter, max_attempts=3, deadline=10, sleep=clock.sleep, clock=clock)
     assert adapter.calls == 1
     assert clock.now == 0

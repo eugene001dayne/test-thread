@@ -15,7 +15,6 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from judge.core import ask
 from judge.errors import JudgeConfigError, JudgeError
-from judge.detail import extract_detail
 from judge.factory import build_adapter
 from judge.diagnosis import Diagnoser
 from envfile import load_env_file

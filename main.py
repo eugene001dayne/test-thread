@@ -17,6 +17,7 @@ from judge.core import ask
 from judge.errors import JudgeConfigError, JudgeError
 from judge.detail import extract_detail
 from judge.factory import build_adapter
+from judge.diagnosis import Diagnoser
 from envfile import load_env_file
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -258,6 +259,7 @@ async def _run_suite_logic(suite_id: str, gemini_key: Optional[str]):
     results = []
     total_latency = 0
     total_cost = 0.0
+    diagnoser = Diagnoser(lambda prompt: ask_judge(prompt))
 
     for case in cases:
         result_id = str(uuid.uuid4())
@@ -305,13 +307,8 @@ async def _run_suite_logic(suite_id: str, gemini_key: Optional[str]):
         total_cost += cost_info["estimated_cost_usd"]
 
         diagnosis = None
-        if not match_result["passed"] and GEMINI_API_KEY:
-            prompt = (
-                f"A test failed for an AI agent. Diagnose why and suggest a fix.\n\n"
-                f"Input: {case['input']}\nExpected: {case['expected_output']}\n"
-                f"Actual: {actual_output}\nReason: {match_result.get('reason', '')}"
-            )
-            diagnosis = gemini_call(prompt)
+        if not match_result["passed"]:
+            diagnosis = diagnoser.diagnose(case, actual_output, match_result.get("reason", ""))
 
         traj_passed = None
         traj_failures = None

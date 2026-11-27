@@ -23,8 +23,6 @@ from envfile import load_env_file
 load_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), os.environ)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -97,21 +95,6 @@ def estimate_cost(input_text: str, output_text: str, model: str = "gemini"):
         "output_tokens": int(output_tokens),
         "estimated_cost_usd": round(cost, 6),
     }
-
-# ── Gemini helper ─────────────────────────────────────────────────────────────
-def gemini_call(prompt: str, key: str = None) -> str:
-    key = key or GEMINI_API_KEY
-    if not key:
-        return ""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-    headers = {"x-goog-api-key": key}
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    try:
-        r = httpx.post(url, headers=headers, json=payload, timeout=30)
-        r.raise_for_status()
-        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception:
-        return ""
 
 # ── Match logic ───────────────────────────────────────────────────────────────
 def _parse_verdict(text):
